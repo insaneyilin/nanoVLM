@@ -1,0 +1,20 @@
+Using device: mps
+
+Loading from backbone weights
+Successfully loaded google/siglip-base-patch16-224 weights from safetensors. Model has 85,797,120 parameters.
+
+Warning: scaled dot product attention not available, using standard attention in LM.
+
+Successfully loaded HuggingFaceTB/SmolLM2-135M weights from safetensors. Model has 134,515,008 parameters.
+nanoVLM initialized with 222,081,600 parameters
+
+Training summary: 820 samples, 68 batches/epoch, batch size 12
+
+Epoch 1/5 | Train Loss: 0.6583 | Val Loss: 0.2803 | Time: 417.70s | T/s: 174.18
+Epoch 2/5 | Train Loss: 0.2980 | Val Loss: 0.2846 | Time: 410.60s | T/s: 177.23
+Epoch 3/5 | Train Loss: 0.2933 | Val Loss: 0.2769 | Time: 386.58s | T/s: 188.12
+Epoch 4/5 | Train Loss: 0.2842 | Val Loss: 0.2870 | Time: 407.59s | T/s: 178.49
+Epoch 5/5 | Train Loss: 0.2777 | Val Loss: 0.2930 | Time: 381.77s | T/s: 190.64
+Average time per epoch: 400.85s
+Average time per sample: 0.4888s
+
