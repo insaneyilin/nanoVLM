@@ -26,3 +26,4 @@ notebooks/
 *.slurm
 
 benchmark_results.json
+.ipynb_checkpoints/

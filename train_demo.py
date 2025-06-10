@@ -1,4 +1,8 @@
-# nanoVLM Imports (please check out the implementations in detail, that's where all the interessting stuff is!)
+import math
+import os
+import time
+
+# nanoVLM Imports
 from data.collators import VQACollator, MMStarCollator
 from data.datasets import MMStarDataset, VQADataset
 from data.processors import get_image_processor, get_tokenizer
@@ -6,18 +10,15 @@ from models.vision_language_model import VisionLanguageModel
 import models.utils as utils
 
 # Libraries
-import math
-import time
-import torch
-from tqdm import tqdm
-import torch.optim as optim
-import matplotlib.pyplot as plt
-from dataclasses import dataclass
-from torch.utils.data import DataLoader
+from dataclasses import dataclass, field
 from datasets import load_dataset, concatenate_datasets
+import matplotlib.pyplot as plt
+import torch
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
-#Otherwise, the tokenizer will through a warning
-import os
+# Otherwise, the tokenizer will through a warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 if torch.cuda.is_available():
@@ -31,11 +32,11 @@ print(f"Using device: {device}")
 torch.manual_seed(0)
 torch.cuda.manual_seed_all(0)
 
-# Dataloaders
+# Prepare dataloaders
 def get_dataloaders(train_cfg, vlm_cfg):
     # Create datasets
     image_processor = get_image_processor(vlm_cfg.vit_img_size)
-    tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer)
+    tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer, vlm_cfg.vlm_extra_tokens)
 
     # Load and combine all training datasets
     combined_train_data = []
@@ -43,7 +44,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
         train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)
         combined_train_data.append(train_ds['train'])
     train_ds = concatenate_datasets(combined_train_data)
-
+    
     test_ds = load_dataset(train_cfg.test_dataset_path)
     train_ds = train_ds.shuffle(seed=0) # Shuffle the training dataset, so train and val get equal contributions from all concatinated datasets
 
@@ -61,8 +62,8 @@ def get_dataloaders(train_cfg, vlm_cfg):
     test_dataset = MMStarDataset(test_ds['val'], tokenizer, image_processor)
 
     # Create collators
-    vqa_collator = VQACollator(tokenizer, vlm_cfg.lm_max_length)
-    mmstar_collator = MMStarCollator(tokenizer)
+    vqa_collator = VQACollator(tokenizer, vlm_cfg.lm_max_length, vlm_cfg.mp_image_token_length)
+    mmstar_collator = MMStarCollator(tokenizer, vlm_cfg.mp_image_token_length)
 
     # Create dataloaders
     train_loader = DataLoader(
@@ -107,11 +108,11 @@ def test_mmstar(model, tokenizer, test_loader, device):
             input_ids = batch['input_ids'].to(device)
             labels = batch['labels'].to(device)
             attention_mask = batch['attention_mask'].to(device)
-
             correct_answer = tokenizer.batch_decode(labels, skip_special_tokens=True)
 
-            gen = model.generate(input_ids, image, attention_mask)
+            gen = model.generate(input_ids, image, attention_mask, greedy=True)
             model_output = tokenizer.batch_decode(gen, skip_special_tokens=True)
+
             # 通过正则表达式检查模型输出是否正确回答了多项选择题，例子：
             # model_outputs = [
             #     "The correct answer is A.",
@@ -150,7 +151,7 @@ def get_lr(it, max_lr, max_steps):
 
 def train(train_cfg, vlm_cfg):
     train_loader, val_loader, test_loader = get_dataloaders(train_cfg, vlm_cfg)
-    tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer)
+    tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer, vlm_cfg.vlm_extra_tokens)
 
     # Initialize model
     if train_cfg.resume_from_vlm_checkpoint:
@@ -263,8 +264,8 @@ def train(train_cfg, vlm_cfg):
 
     # Summary Statistics
     if not train_cfg.eval_in_epochs:
-        model.save_pretrained(save_directory=vlm_cfg.vlm_checkpoint_path)
-        # model.push_to_hub(hf_model_name)
+      model.save_pretrained(save_directory=vlm_cfg.vlm_checkpoint_path)
+      model.push_to_hub(hf_model_name)
 
 
     avg_epoch_time = sum(epoch_times) / len(epoch_times)
@@ -309,23 +310,28 @@ class VLMConfig:
     lm_rms_eps: float = 1e-5
     lm_re_base: int = 100000
     lm_max_position_embeddings: int = 8192
-    lm_vocab_size: int = 49152
+    lm_base_vocab_size: int = 49152
+    extra_token_amount: int = 1  # Number of extra tokens for the VLM (image start, image end, image token)
+    lm_vocab_size: int = lm_base_vocab_size + extra_token_amount # Not a great way to do this, but it works for now (vlm_extra_tokens cannot be a dict, since this is mutable, and a Field has no len() function)
     lm_n_heads: int = 9
     lm_n_kv_heads: int = 3
     lm_dropout: float = 0.0
     lm_n_blocks: int = 30
     lm_attn_scaling: float = 1.0
     lm_eos_token_id: int = 0
-    lm_max_length: int = 128 - 49  # Deduct the image token length to achieve a 'nice number'
+    lm_max_length: int = 128
     lm_use_tokens: bool = False # Decide if the LM expects tokens or embeddings as input (if using as a backbone for the VLM, set to False)
     lm_tie_weights: bool = True # Decide if you want to tie the LM Head weight to the token embedding weights
     lm_model_type: str = 'HuggingFaceTB/SmolLM2-135M'
     lm_tokenizer: str = 'HuggingFaceTB/cosmo2-tokenizer'
 
     mp_pixel_shuffle_factor: int = 2
+    mp_image_token_length: int = 49
 
+    vlm_extra_tokens: dict[str, str] = field(default_factory=lambda: {"image_token": "<|image|>"})#, "boi_token": "<|image_start|>", "eoi_token": "<|image_end|>"})
     vlm_load_backbone_weights: bool = True
-    vlm_checkpoint_path: str = 'checkpoints/nanoVLM-222M'
+    vlm_checkpoint_path: str = 'checkpoints'
+    hf_repo_name: str = 'nanoVLM'
 
 
 @dataclass
